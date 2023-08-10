@@ -24,14 +24,15 @@ mod vendor;
 use std::collections::HashMap;
 
 use heck::{ToSnakeCase, ToUpperCamelCase};
-use proc_macro2::{Ident, Punct, Spacing, Span, TokenTree};
+use proc_macro2::{Ident, Punct, Spacing, Span, TokenStream, TokenTree};
 use quote::{format_ident, ToTokens, TokenStreamExt};
 use syn::{
     parse::Parse,
     parse_macro_input, parse_quote,
     punctuated::Punctuated,
     visit_mut::{visit_item_mut, VisitMut},
-    FnArg, Item, ItemMod, LitStr, PathSegment, ReturnType, Token, TraitItem, TraitItemMethod,
+    FnArg, Item, ItemMod, ItemStruct, LitStr, PathSegment, ReturnType, Token, TraitItem,
+    TraitItemMethod, Type, TypePath,
 };
 
 use vendor::wasmtime_component_macro::bindgen::{expand as expand_wasmtime_component, Config};
@@ -58,6 +59,7 @@ type WitNamespaceName = String;
 type WitPackageName = String;
 type WitInterfaceName = String;
 type FullModulePath = String;
+type StructLookup = HashMap<StructName, (Punctuated<PathSegment, Token![::]>, ItemStruct)>;
 
 /// Inputs to the wit_bindgen_wasmcloud::providers::host::generate! macro
 struct MacroConfig {
@@ -89,7 +91,7 @@ pub fn generate(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     // Parse the WIT for files (a second time, in addition to what has been done to generate),
     // and find all exports
-    let mut exported_iface_invocation_methods: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut exported_iface_invocation_methods: Vec<TokenStream> = Vec::new();
     for (_, world) in cfg.bindgen_cfg.resolve.worlds.iter() {
         for (world_item, _) in world.exports.iter() {
             match world_item {
@@ -221,7 +223,7 @@ out on the lattice. Please modify the corresponding WIT file that contains inter
     }
 
     // Expand the wasmtime::component macro with the given arguments
-    let bindgen_tokens: proc_macro2::TokenStream = expand_wasmtime_component(&cfg.bindgen_cfg)
+    let bindgen_tokens: TokenStream = expand_wasmtime_component(&cfg.bindgen_cfg)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into();
 
@@ -234,22 +236,23 @@ out on the lattice. Please modify the corresponding WIT file that contains inter
     let _ = visitor.visit_file_mut(&mut bindgen_ast);
 
     // Turn the function calls into object declarations for receiving from lattice
-    let methods_by_iface = if let Some(_) = &visitor.wit_package {
-        build_lattice_methods_by_wit_interface(
+    let methods_by_iface = match (&visitor.wit_ns, &visitor.wit_package) {
+        (Some(ns), Some(package)) => build_lattice_methods_by_wit_interface(
             &visitor.serde_extended_structs,
             &visitor.import_trait_methods,
-        )
-    } else {
-        panic!("failed to parse top-level WIT package name while reading bindgen output")
+            ns,
+            package,
+        ),
+        _ => panic!("failed to parse top-level WIT package name while reading bindgen output"),
     };
 
     // Create the implementation struct name as an Ident
     let impl_struct_name = Ident::new_raw(cfg.impl_struct.as_str(), Span::call_site());
 
     // Build a list of match arms for the interfaces
-    let mut interface_dispatch_match_arms: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut interface_dispatch_match_arms: Vec<TokenStream> = Vec::new();
 
-    let mut iface_tokens = proc_macro2::TokenStream::new();
+    let mut iface_tokens = TokenStream::new();
     for (wit_iface_name, methods) in methods_by_iface.iter() {
         let wit_iface = Ident::new(wit_iface_name, Span::call_site());
 
@@ -263,7 +266,7 @@ out on the lattice. Please modify the corresponding WIT file that contains inter
             .clone()
             .into_iter()
             .map(|LatticeMethod { struct_members, .. }| struct_members)
-            .collect::<Vec<proc_macro2::TokenStream>>();
+            .collect::<Vec<TokenStream>>();
         let lattice_method_names = methods
             .clone()
             .into_iter()
@@ -344,15 +347,24 @@ out on the lattice. Please modify the corresponding WIT file that contains inter
         ));
     }
 
+    // Build a list of structs that should be included
+    let structs: Vec<TokenStream> = visitor
+        .serde_extended_structs
+        .iter()
+        .map(|(_, (_, s))| s.to_token_stream())
+        .collect();
+
     // Build the final chunk of code
     let tokens = quote::quote!(
-        // START: wit-bindgen output
-        #bindgen_ast
-        // END: wit-bidngen output
-
         // START: per-interface codegen
         #iface_tokens
         // END: per-interface codegen
+
+        // START: wit-bindgen generated structs to map types
+        #(
+            #structs
+        )*
+        // END: wit-bindgen generated structs to map types
 
         /// MessageDispatch ensures that your provider can receive and
         /// process messages sent to it over the lattice
@@ -458,7 +470,7 @@ struct WitBindgenOutputVisitor {
     exports_ns_module: Option<ItemMod>,
 
     /// Structs that were modified and extended to derive Serialize/Deserialize
-    serde_extended_structs: HashMap<StructName, Punctuated<PathSegment, Token![::]>>,
+    serde_extended_structs: StructLookup,
 
     /// Functions in traits that we'll have to stub eventually
     import_trait_methods: HashMap<WitInterfaceName, Vec<TraitItemMethod>>,
@@ -604,6 +616,40 @@ impl VisitMut for WitBindgenOutputVisitor {
                                     trimmed.sig.inputs.into_iter().skip(1),
                                 );
 
+                                // OUTPUT: TokenStream [Punct { ch: '-', spacing: Joint, span: #20 bytes(0..117) }, Punct { ch: '>', spacing: Alone, span: #20 bytes(0..117) }, Ident { ident: "wasmtime", span: #20 bytes(0..117) }, Punct { ch: ':', spacing: Joint, span: #20 bytes(0..117) }, Punct { ch: ':', spacing: Alone, span: #20 bytes(0..117) }, Ident { ident: "Result", span: #20 bytes(0..117) }, Punct { ch: '<', spacing: Alone, span: #20 bytes(0..117) }, Ident { ident: "Result", span: #20 bytes(0..117) }, Punct { ch: '<', spacing: Alone, span: #20 bytes(0..117) }, Group { delimiter: Parenthesis, stream: TokenStream [], span: #20 bytes(0..117) }, Punct { ch: ',', spacing: Alone, span: #20 bytes(0..117) }, Ident { ident: "String", span: #20 bytes(0..117) }, Punct { ch: '>', spacing: Alone, span: #20 bytes(0..117) }, Punct { ch: '>', spacing: Alone, span: #20 bytes(0..117) }]
+
+                                // Convert wasmtime:Result<T, wasmtime::Error> -> T
+                                match &tim
+                                    .sig
+                                    .output
+                                    .to_token_stream()
+                                    .into_iter()
+                                    .collect::<Vec<TokenTree>>()[..]
+                                {
+                                    [
+                                        TokenTree::Punct(_), // -
+                                        TokenTree::Punct(_), // >
+                                        TokenTree::Ident(ref w), // wasmtime
+                                        TokenTree::Punct(_), // :
+                                        TokenTree::Punct(_), // :
+                                        TokenTree::Ident(ref r), // Result
+                                        inner @ ..,
+                                        TokenTree::Punct(_), // ,
+                                        TokenTree::Ident(ref w2), // wasmtime
+                                        TokenTree::Punct(_), // :
+                                        TokenTree::Punct(_), // :
+                                        TokenTree::Ident(ref e), // Error
+                                        TokenTree::Punct(_), // >
+                                        TokenTree::Punct(_), // >
+                                    ] if w.to_string() == "wasmtime" && r.to_string() == "Result" && w2.to_string() == "wasmtime" && e.to_string() == "Error" => {
+                                        
+                                        // TODO: convert to token stream, use as output
+                                        let inner_tokens = TokenStream::from_iter(inner);
+                                        tim.sig.output = ReturnType::parse(quote::quote!(-> #inner_tokens).to_token_stream()).expect("failed to build result from wasmtime::Result");
+                                    },
+                                    _ => {},
+                                }
+
                                 // Find functions in traits that we must stub later
                                 self.import_trait_methods
                                     .entry(self.current_module_full_path())
@@ -642,7 +688,7 @@ impl VisitMut for WitBindgenOutputVisitor {
                     ));
 
                     s.attrs.append(&mut vec![parse_quote!(
-                        #[derive(::serde::Serialize, ::serde::Deserialize)]
+                        #[derive(Debug, ::serde::Serialize, ::serde::Deserialize)]
                     )]);
 
                     debug_print(format!(
@@ -661,7 +707,7 @@ impl VisitMut for WitBindgenOutputVisitor {
                     }
                     struct_import_path.push(syn::PathSegment::from(s.ident.clone()));
                     self.serde_extended_structs
-                        .insert(s.ident.to_string(), struct_import_path);
+                        .insert(s.ident.to_string(), (struct_import_path, s.clone()));
                 }
             }
 
@@ -677,7 +723,7 @@ struct LatticeMethod {
     /// The name of the struct that can be deserialized to perform the invocation
     struct_name: Ident,
     /// Tokens that represent the struct member declarations
-    struct_members: proc_macro2::TokenStream,
+    struct_members: TokenStream,
     /// Function name for the method that will be called after a lattice invocation is received
     func_name: Ident,
     /// Invocation arguments (i.e. invocation struct members)
@@ -686,10 +732,11 @@ struct LatticeMethod {
     invocation_return: ReturnType,
 }
 
-/// Build <X>ArgumentObjects from functions that were detected as imports
 fn build_lattice_methods_by_wit_interface(
-    struct_lookup: &HashMap<String, Punctuated<PathSegment, Token![::]>>,
+    struct_lookup: &StructLookup,
     map: &HashMap<WitInterfaceName, Vec<TraitItemMethod>>,
+    wit_ns: &str,
+    wit_package: &str,
 ) -> HashMap<WitInterfaceName, Vec<LatticeMethod>> {
     let mut methods_by_name: HashMap<WitInterfaceName, Vec<LatticeMethod>> = HashMap::new();
 
@@ -700,7 +747,13 @@ fn build_lattice_methods_by_wit_interface(
             // across the lattice, in a <CamelCaseModule><CamelCaseInterface><CamelCaseFunctionName> pattern
             // (ex. MessagingConsumerRequestMultiInvocation)
             let lattice_method_name = LitStr::new(
-                format!("Message.{}", f.sig.ident.to_string().to_upper_camel_case()).as_ref(),
+                format!(
+                    "{}{}/Message.{}",
+                    wit_ns,
+                    wit_package,
+                    f.sig.ident.to_string().to_upper_camel_case()
+                )
+                .as_ref(),
                 Span::call_site(),
             );
 
@@ -710,15 +763,6 @@ fn build_lattice_methods_by_wit_interface(
                 wit_iface_name.to_upper_camel_case(),
                 f.sig.ident.to_string().to_upper_camel_case()
             );
-
-            // wit-bindgen generates functions that borrow (regardless of what opts.ownership is set to),
-            // fucntions that look like the following could be generated:
-            //
-            // - fn request(subject : & str, body : Option < & [u8] >, timeout_ms : u32,) -> Result < BrokerMessage, wit_bindgen :: rt :: string :: String >
-            // - fn request_multi(subject : & str, body : Option < & [u8] >, timeout_ms : u32, max_results : u32,) -> Result < wit_bindgen :: rt :: vec :: Vec :: < BrokerMessage >, wit_bindgen :: rt :: string :: String >
-            // - fn publish(msg : & BrokerMessage,) -> Result < (), wit_bindgen :: rt :: string :: String >
-            //
-            // Since these arguments use lifetimes, we can't just convert them to structs without either naming or *removing* the lifetimes (via converting to owned data)
 
             // Build a list of invocation arguments similar to the structs
             let mut invocation_args: Vec<Ident> = Vec::new();
@@ -731,7 +775,7 @@ fn build_lattice_methods_by_wit_interface(
                 .inputs
                 .iter()
                 .enumerate()
-                .fold(proc_macro2::TokenStream::new(), |mut tokens, (idx, arg)| {
+                .fold(TokenStream::new(), |mut tokens, (idx, arg)| {
                     // If we're not the first index, add a comman
                     if idx != 0 {
                         tokens.append_all([&TokenTree::Punct(Punct::new(',', proc_macro2::Spacing::Alone))]);
@@ -777,7 +821,7 @@ fn build_lattice_methods_by_wit_interface(
 
                                         // If we have a T that this module defined, we must use the full path to it
                                         // if not, it is likely a builtin, so we can use it directly
-                                        if let Some(v) = struct_lookup.get(&simple_ref[3].to_string()) {
+                                        if let Some((v, _)) = struct_lookup.get(&simple_ref[3].to_string()) {
                                             tokens.append_all([ v.to_token_stream() ]);
                                         } else {
                                             tokens.append_all([ &simple_ref[3]]);
@@ -841,7 +885,7 @@ fn build_lattice_methods_by_wit_interface(
                                     rest =>  {
                                         // If we have a < T >, and T is a struct this module defined, we must use the full path to it
                                         // if not, it is likely a builtin, so we can use it directly
-                                        if let Some(v) = struct_lookup.get(&rest[1].to_string()) {
+                                        if let Some((v, _)) = struct_lookup.get(&rest[1].to_string()) {
                                             tokens.append_all(&wrapped_ref[0..5]);
                                             tokens.append_all([ v.to_token_stream() ]);
                                             tokens.append_all(&wrapped_ref[6..]);

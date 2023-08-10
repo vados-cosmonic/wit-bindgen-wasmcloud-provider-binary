@@ -364,7 +364,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wit-bindgen-wasmcloud-binary"
+name = "wit-bindgen-wasmcloud-provider-binary"
 version = "0.1.0"
 dependencies = [
  "anyhow",
