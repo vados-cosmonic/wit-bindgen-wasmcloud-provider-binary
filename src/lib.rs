@@ -1,24 +1,20 @@
-//! Macro for building [`wasmtime::component`](https://docs.rs/wasmtime/latest/wasmtime/component/index.html)s
-//! which contain wasmCloud functionality to produce a [capability provider](https://wasmcloud.com/docs/fundamentals/capabilities/create-provider/)
+//! Macro for building [wasmCloud capability providers](https://wasmcloud.com/docs/fundamentals/capabilities/create-provider/)
+//! from [WIT](https://github.com/WebAssembly/component-model/blob/main/design/mvp/WIT.md) contracts.
 //!
-//! Usage of this macro should look something like:
+//! For example, to build a capability provider for the [wasmcloud:keyvalue contract](https://github.com/wasmCloud/interfaces/tree/main/keyvalue):
 //!
 //! ```
-//! wasmcloud_provider_host_macros::generate!(YourProvider, ...bindgen args)
+//! wit_bindgen_wasmcloud_provider_binary::generate!(
+//!   KeyvalueProvider,      // implementation struct
+//!   "wasmcloud:keyvalue",  // wasmcloud contract name
+//!   "keyvalue",            // wit-bindgen style configuration
+//! )
 //!
 //! struct YourProvider;
-//!
-//! // Implementation of methods specific to your provider, along with
-//! // methods required of any wasmCloud provider (ex. `_put_link()`)
-//! impl YourProvider {
-//!   ...
-//! }
-//!
-//! // Implementation of WIT contracts/interfaces specific to your provider
-//! impl Interface YourProvider {
-//!   ...
-//! }
 //! ```
+//!
+//! As is customary with WIT-related tooling, "keyvalue" refers to the WIT world that your component will inhabit. See [wit-bindgen tooling](https://github.com/bytecodealliance/wit-bindgen) for more information on the different forms that can be used.
+//!
 
 mod vendor;
 use std::collections::HashMap;
@@ -52,7 +48,7 @@ type WitInterfaceName = String;
 type FullModulePath = String;
 type StructLookup = HashMap<StructName, (Punctuated<PathSegment, Token![::]>, ItemStruct)>;
 
-/// Inputs to the wit_bindgen_wasmcloud::providers::host::generate! macro
+/// Inputs to the wit_bindgen_wasmcloud_provider_binary::generate! macro
 struct MacroConfig {
     pub(crate) impl_struct: ImplStructName,
     pub(crate) contract: WasmcloudContractName,
@@ -74,14 +70,13 @@ impl Parse for MacroConfig {
     }
 }
 
-/// This macro generates functionality necessary to use a WIT-enabled Rust providers (a [`wasmtime::component`])
+/// This macro generates functionality necessary to use a WIT-enabled Rust providers (binaries that are managed by the host)
 #[proc_macro]
 pub fn generate(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let cfg = parse_macro_input!(input as MacroConfig);
     let contract_ident = LitStr::new(cfg.contract.as_str(), Span::call_site());
 
-    // Parse the WIT for files (a second time, in addition to what has been done to generate),
-    // and find all exports
+    // Parse the WIT for files (a second time, in addition to what has been done to generate)
     let mut exported_iface_invocation_methods: Vec<TokenStream> = Vec::new();
     for (_, world) in cfg.bindgen_cfg.resolve.worlds.iter() {
         for (world_item, _) in world.exports.iter() {
@@ -655,8 +650,14 @@ impl VisitMut for WitBindgenOutputVisitor {
                     struct_import_path.push(syn::PathSegment::from(s.ident.clone()));
 
                     // Disallow the case where two identically named structs exist under different paths
-                    if self.serde_extended_structs.contains_key(&s.ident.to_string()) {
-                        panic!("found duplicate instances of struct [${}]", s.ident.to_string());
+                    if self
+                        .serde_extended_structs
+                        .contains_key(&s.ident.to_string())
+                    {
+                        panic!(
+                            "found duplicate instances of struct [${}]",
+                            s.ident.to_string()
+                        );
                     }
 
                     self.serde_extended_structs
