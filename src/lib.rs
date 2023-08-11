@@ -648,13 +648,17 @@ impl VisitMut for WitBindgenOutputVisitor {
                     // Save the Struct by name to the tally of structs that have been extended
                     // this is used later to generate interfaces, when generating interfaces, as a import path lookup
                     // so that types can be resolved (i.e. T -> path::to::T)
-                    //
-                    // TODO: it is possible to have two similarly named structs produced from records in different interfaces
                     let mut struct_import_path = Punctuated::<syn::PathSegment, Token![::]>::new();
                     for p in self.parents.iter() {
                         struct_import_path.push(syn::PathSegment::from(p.clone()));
                     }
                     struct_import_path.push(syn::PathSegment::from(s.ident.clone()));
+
+                    // Disallow the case where two identically named structs exist under different paths
+                    if self.serde_extended_structs.contains_key(&s.ident.to_string()) {
+                        panic!("found duplicate instances of struct [${}]", s.ident.to_string());
+                    }
+
                     self.serde_extended_structs
                         .insert(s.ident.to_string(), (struct_import_path, s.clone()));
                 }
