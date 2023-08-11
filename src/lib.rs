@@ -32,7 +32,7 @@ use syn::{
     punctuated::Punctuated,
     visit_mut::{visit_item_mut, VisitMut},
     FnArg, Item, ItemMod, ItemStruct, LitStr, PathSegment, ReturnType, Token, TraitItem,
-    TraitItemMethod, Type, TypePath,
+    TraitItemMethod,
 };
 
 use vendor::wasmtime_component_macro::bindgen::{expand as expand_wasmtime_component, Config};
@@ -147,6 +147,8 @@ Please ensure that types for exported interface functions (normally a single rec
                                         }
                                     }
                                 };
+
+                                // Remove the attributes on all the fields
 
                                 debug_print(format!(
                                     "found iface fn arg [{}] with rust type [{}]",
@@ -607,7 +609,7 @@ impl VisitMut for WitBindgenOutputVisitor {
                 //
                 // In general, messages in host traits become RPC calls that go out on the lattice, so they must be converted
                 if t.ident.to_string() == HOST_IMPORTS_TRAIT_NAME {
-                    for ti in t.items.iter() {
+                    for ti in t.items.iter_mut() {
                         match ti {
                             TraitItem::Method(tim) => {
                                 // Prune the &self argument
@@ -616,10 +618,8 @@ impl VisitMut for WitBindgenOutputVisitor {
                                     trimmed.sig.inputs.into_iter().skip(1),
                                 );
 
-                                // OUTPUT: TokenStream [Punct { ch: '-', spacing: Joint, span: #20 bytes(0..117) }, Punct { ch: '>', spacing: Alone, span: #20 bytes(0..117) }, Ident { ident: "wasmtime", span: #20 bytes(0..117) }, Punct { ch: ':', spacing: Joint, span: #20 bytes(0..117) }, Punct { ch: ':', spacing: Alone, span: #20 bytes(0..117) }, Ident { ident: "Result", span: #20 bytes(0..117) }, Punct { ch: '<', spacing: Alone, span: #20 bytes(0..117) }, Ident { ident: "Result", span: #20 bytes(0..117) }, Punct { ch: '<', spacing: Alone, span: #20 bytes(0..117) }, Group { delimiter: Parenthesis, stream: TokenStream [], span: #20 bytes(0..117) }, Punct { ch: ',', spacing: Alone, span: #20 bytes(0..117) }, Ident { ident: "String", span: #20 bytes(0..117) }, Punct { ch: '>', spacing: Alone, span: #20 bytes(0..117) }, Punct { ch: '>', spacing: Alone, span: #20 bytes(0..117) }]
-
                                 // Convert wasmtime:Result<T, wasmtime::Error> -> T
-                                match &tim
+                                match &mut tim
                                     .sig
                                     .output
                                     .to_token_stream()
@@ -642,10 +642,14 @@ impl VisitMut for WitBindgenOutputVisitor {
                                         TokenTree::Punct(_), // >
                                         TokenTree::Punct(_), // >
                                     ] if w.to_string() == "wasmtime" && r.to_string() == "Result" && w2.to_string() == "wasmtime" && e.to_string() == "Error" => {
-                                        
+
                                         // TODO: convert to token stream, use as output
-                                        let inner_tokens = TokenStream::from_iter(inner);
-                                        tim.sig.output = ReturnType::parse(quote::quote!(-> #inner_tokens).to_token_stream()).expect("failed to build result from wasmtime::Result");
+                                        let mut inner_tokens = TokenStream::new();
+                                        inner.iter_mut().fold(&mut inner_tokens, |acc, v| {
+                                            acc.append(v.clone());
+                                            acc
+                                        });
+                                        tim.sig.output = syn::parse2(inner_tokens).expect("failed to build result from wasmtime::Result");
                                     },
                                     _ => {},
                                 }
@@ -687,6 +691,16 @@ impl VisitMut for WitBindgenOutputVisitor {
                         s.ident.to_string(),
                     ));
 
+
+                    // Clear all pre-existing attributes (i.e. [component])
+                    s.attrs.clear();
+
+                    // Clear all pre-existing attributes from fields (mostly [component]) 
+                    for f in &mut s.fields {
+                        f.attrs.clear();
+                    }
+
+                    // Add the attributes we want to be present
                     s.attrs.append(&mut vec![parse_quote!(
                         #[derive(Debug, ::serde::Serialize, ::serde::Deserialize)]
                     )]);
@@ -909,6 +923,8 @@ fn build_lattice_methods_by_wit_interface(
 
                     tokens
                 });
+
+            // Remove wasmtime::Error from methods on the output 
 
             // Add the struct and it's members to a list that will be used in another quote
             // it cannot be added directly/composed to a TokenStream here to avoid import conflicts
