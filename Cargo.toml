@@ -9,7 +9,7 @@ repository = "https://github.com/wasmCloud/wasmCloud"
 publish = false
 rust_version = "1.70.0"
 description = """
-Bindgen macro for Rust-based, binary-based wasmCloud capability providers
+Bindgen macro for binary-based wasmCloud capability providers written in Rust
 """
 
 [lib]
