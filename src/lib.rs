@@ -619,7 +619,7 @@ impl VisitMut for WitBindgenOutputVisitor {
                                 );
 
                                 // Convert wasmtime:Result<T, wasmtime::Error> -> T
-                                match &mut tim
+                                match &mut trimmed
                                     .sig
                                     .output
                                     .to_token_stream()
@@ -627,29 +627,26 @@ impl VisitMut for WitBindgenOutputVisitor {
                                     .collect::<Vec<TokenTree>>()[..]
                                 {
                                     [
-                                        TokenTree::Punct(_), // -
-                                        TokenTree::Punct(_), // >
+                                        dash @ TokenTree::Punct(_), // -
+                                        arrow @ TokenTree::Punct(_), // >
                                         TokenTree::Ident(ref w), // wasmtime
                                         TokenTree::Punct(_), // :
                                         TokenTree::Punct(_), // :
                                         TokenTree::Ident(ref r), // Result
+                                        TokenTree::Punct(_), // <
                                         inner @ ..,
-                                        TokenTree::Punct(_), // ,
-                                        TokenTree::Ident(ref w2), // wasmtime
-                                        TokenTree::Punct(_), // :
-                                        TokenTree::Punct(_), // :
-                                        TokenTree::Ident(ref e), // Error
                                         TokenTree::Punct(_), // >
-                                        TokenTree::Punct(_), // >
-                                    ] if w.to_string() == "wasmtime" && r.to_string() == "Result" && w2.to_string() == "wasmtime" && e.to_string() == "Error" => {
-
-                                        // TODO: convert to token stream, use as output
+                                    ] if w.to_string() == "wasmtime" && r.to_string() == "Result" => {
                                         let mut inner_tokens = TokenStream::new();
+                                        inner_tokens.append(dash.clone());
+                                        inner_tokens.append(arrow.clone());
                                         inner.iter_mut().fold(&mut inner_tokens, |acc, v| {
                                             acc.append(v.clone());
                                             acc
                                         });
-                                        tim.sig.output = syn::parse2(inner_tokens).expect("failed to build result from wasmtime::Result");
+
+                                        trimmed.sig.output = syn::parse2::<ReturnType>(inner_tokens).expect("failed to purge wasmtime::Result from method return");
+
                                     },
                                     _ => {},
                                 }
@@ -691,11 +688,10 @@ impl VisitMut for WitBindgenOutputVisitor {
                         s.ident.to_string(),
                     ));
 
-
                     // Clear all pre-existing attributes (i.e. [component])
                     s.attrs.clear();
 
-                    // Clear all pre-existing attributes from fields (mostly [component]) 
+                    // Clear all pre-existing attributes from fields (mostly [component])
                     for f in &mut s.fields {
                         f.attrs.clear();
                     }
@@ -924,7 +920,7 @@ fn build_lattice_methods_by_wit_interface(
                     tokens
                 });
 
-            // Remove wasmtime::Error from methods on the output 
+            // Remove wasmtime::Error from methods on the output
 
             // Add the struct and it's members to a list that will be used in another quote
             // it cannot be added directly/composed to a TokenStream here to avoid import conflicts
