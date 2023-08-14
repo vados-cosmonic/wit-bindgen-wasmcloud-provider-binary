@@ -294,6 +294,10 @@ out on the lattice. Please modify the corresponding WIT file that contains inter
 
             #[::async_trait::async_trait]
             pub trait #wit_iface {
+                fn contract_id() -> &'static str {
+                    #contract_ident
+                }
+
                 #(
                     async fn #func_names (
                         &self,
@@ -579,8 +583,8 @@ impl VisitMut for WitBindgenOutputVisitor {
                                     .collect::<Vec<TokenTree>>()[..]
                                 {
                                     [
-                                        dash @ TokenTree::Punct(_), // -
-                                        arrow @ TokenTree::Punct(_), // >
+                                        TokenTree::Punct(_), // -
+                                        TokenTree::Punct(_), // >
                                         TokenTree::Ident(ref w), // wasmtime
                                         TokenTree::Punct(_), // :
                                         TokenTree::Punct(_), // :
@@ -590,14 +594,15 @@ impl VisitMut for WitBindgenOutputVisitor {
                                         TokenTree::Punct(_), // >
                                     ] if w.to_string() == "wasmtime" && r.to_string() == "Result" => {
                                         let mut inner_tokens = TokenStream::new();
-                                        inner_tokens.append(dash.clone());
-                                        inner_tokens.append(arrow.clone());
                                         inner.iter_mut().fold(&mut inner_tokens, |acc, v| {
                                             acc.append(v.clone());
                                             acc
                                         });
+                                        let result_tokens = quote::quote!(
+                                            -> ::wasmcloud_provider_sdk::error::ProviderResult<#inner_tokens>
+                                        );
 
-                                        trimmed.sig.output = syn::parse2::<ReturnType>(inner_tokens).expect("failed to purge wasmtime::Result from method return");
+                                        trimmed.sig.output = syn::parse2::<ReturnType>(result_tokens).expect("failed to purge wasmtime::Result from method return");
 
                                     },
                                     _ => {},
