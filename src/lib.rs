@@ -4,7 +4,7 @@
 //! For example, to build a capability provider for the [wasmcloud:keyvalue contract](https://github.com/wasmCloud/interfaces/tree/main/keyvalue):
 //!
 //! ```
-//! wit_bindgen_wasmcloud_provider_binary::generate!(
+//! wit_bindgen_wasmcloud::provider::binary::generate!(
 //!   KeyvalueProvider,      // implementation struct
 //!   "wasmcloud:keyvalue",  // wasmcloud contract name
 //!   "keyvalue",            // wit-bindgen style configuration
@@ -48,7 +48,7 @@ type WitInterfaceName = String;
 type FullModulePath = String;
 type StructLookup = HashMap<StructName, (Punctuated<PathSegment, Token![::]>, ItemStruct)>;
 
-/// Inputs to the wit_bindgen_wasmcloud_provider_binary::generate! macro
+/// Inputs to the wit_bindgen_wasmcloud::provider::binary::generate! macro
 struct MacroConfig {
     pub(crate) impl_struct: ImplStructName,
     pub(crate) contract: WasmcloudContractName,
